@@ -39,12 +39,12 @@ func TestClose(t *testing.T) {
 	}
 }
 
-func TestSlave(t *testing.T) {
+func TestReplica(t *testing.T) {
 	db := &DB{}
 	last := -1
 
 	err := quick.Check(func(n int) bool {
-		index := db.slave(n)
+		index := db.replica(n)
 		if n <= 1 {
 			return index == 0
 		}

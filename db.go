@@ -30,7 +30,7 @@ type SQLDB interface {
 }
 
 // DB is a logical database with multiple underlying physical databases
-// forming a single master multiple slaves topology.
+// forming a single primary, multiple replicas topology.
 // Reads and writes are automatically directed to the correct physical db.
 type DB struct {
 	Pdbs  []SQLDB // Physical databases
@@ -39,7 +39,7 @@ type DB struct {
 
 // Open concurrently opens each underlying physical db.
 // dataSourceNames must be a semi-comma separated list of DSNs with the first
-// one being used as the master and the rest as slaves.
+// one being used as the primary and the rest as replicas.
 func Open(driverName, dataSourceNames string) (*DB, error) {
 	conns := strings.Split(dataSourceNames, ";")
 	db := &DB{Pdbs: make([]SQLDB, len(conns))}
@@ -68,12 +68,12 @@ func (db *DB) Driver() driver.Driver {
 	return db.Pdbs[0].Driver()
 }
 
-// Begin starts a transaction on the master. The isolation level is dependent on the driver.
+// Begin starts a transaction on the primary. The isolation level is dependent on the driver.
 func (db *DB) Begin() (*sql.Tx, error) {
 	return db.Pdbs[0].Begin()
 }
 
-// Begin starts a transaction with the provided context on the master.
+// Begin starts a transaction with the provided context on the primary.
 // The isolation level is dependent on the driver.
 func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
 	return db.Pdbs[0].BeginTx(ctx, opts)
@@ -81,14 +81,14 @@ func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 
 // Exec executes a query without returning any rows.
 // The args are for any placeholder parameters in the query.
-// Exec uses the master as the underlying physical db.
+// Exec uses the primary as the underlying physical db.
 func (db *DB) Exec(query string, args ...interface{}) (sql.Result, error) {
 	return db.Pdbs[0].Exec(query, args...)
 }
 
 // ExecContext executes a query without returning any rows.
 // The args are for any placeholder parameters in the query.
-// Exec uses the master as the underlying physical db.
+// Exec uses the primary as the underlying physical db.
 func (db *DB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	return db.Pdbs[0].ExecContext(ctx, query, args...)
 }
@@ -148,32 +148,32 @@ func (db *DB) PrepareContext(ctx context.Context, query string) (Stmt, error) {
 
 // Query executes a query that returns rows, typically a SELECT.
 // The args are for any placeholder parameters in the query.
-// Query uses a slave as the physical db.
+// Query uses a replica as the physical db.
 func (db *DB) Query(query string, args ...interface{}) (*sql.Rows, error) {
-	return db.Slave().Query(query, args...)
+	return db.Replica().Query(query, args...)
 }
 
 // QueryContext executes a query that returns rows, typically a SELECT.
 // The args are for any placeholder parameters in the query.
-// QueryContext uses a slave as the physical db.
+// QueryContext uses a replica as the physical db.
 func (db *DB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
-	return db.Slave().QueryContext(ctx, query, args...)
+	return db.Replica().QueryContext(ctx, query, args...)
 }
 
 // QueryRow executes a query that is expected to return at most one row.
 // QueryRow always return a non-nil value.
 // Errors are deferred until Row's Scan method is called.
-// QueryRow uses a slave as the physical db.
+// QueryRow uses a replica as the physical db.
 func (db *DB) QueryRow(query string, args ...interface{}) *sql.Row {
-	return db.Slave().QueryRow(query, args...)
+	return db.Replica().QueryRow(query, args...)
 }
 
 // QueryRowContext executes a query that is expected to return at most one row.
 // QueryRowContext always return a non-nil value.
 // Errors are deferred until Row's Scan method is called.
-// QueryRowContext uses a slave as the physical db.
+// QueryRowContext uses a replica as the physical db.
 func (db *DB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	return db.Slave().QueryRowContext(ctx, query, args...)
+	return db.Replica().QueryRowContext(ctx, query, args...)
 }
 
 // SetMaxIdleConns sets the maximum number of connections in the idle
@@ -208,17 +208,29 @@ func (db *DB) SetConnMaxLifetime(d time.Duration) {
 	}
 }
 
-// Slave returns one of the physical databases which is a slave
+// Slave returns one of the physical databases which is a replica
+//
+// Deprecated: use db.Replica instead
 func (db *DB) Slave() SQLDB {
-	return db.Pdbs[db.slave(len(db.Pdbs))]
+	return db.Replica()
 }
 
-// Master returns the master physical database
+func (db *DB) Replica() SQLDB {
+	return db.Pdbs[db.replica(len(db.Pdbs))]
+}
+
+// Master returns the primary physical database
+//
+// Deprecated: use db.Primary instead.
 func (db *DB) Master() SQLDB {
+	return db.Primary()
+}
+
+func (db *DB) Primary() SQLDB {
 	return db.Pdbs[0]
 }
 
-func (db *DB) slave(n int) int {
+func (db *DB) replica(n int) int {
 	if n <= 1 {
 		return 0
 	}
